@@ -18,17 +18,26 @@ Then add the secrets below in GitHub: `Settings -> Secrets and variables -> Acti
 
 ### `DOT_ENV`
 
-Single-line deploy config in `KEY=value` format:
+Single-line deploy config in `KEY=value` format. Copy this template and replace the required values:
 
 ```env
+# Required
 CPANEL_HOST=example.com
 CPANEL_USERNAME=cpanel_user
 CPANEL_TARGET_DIR=/home/cpanel_user/public_html
+
+# Defaults
 CPANEL_PORT=22
-CPANEL_PHP_BIN=/usr/local/bin/ea-php82
+CPANEL_PHP_BIN=php
 PHP_VERSION=8.2
 NODE_VERSION=22
-DEPLOY_BRANCH=main
+RSYNC_DELETE=true
+RUN_LARAVEL_MIGRATIONS=true
+RUN_LARAVEL_OPTIMIZE=true
+RUN_LARAVEL_STORAGE_LINK=true
+
+# Optional. If omitted, the repository default branch is used.
+# DEPLOY_BRANCH=main
 ```
 
 Required keys:
@@ -72,20 +81,6 @@ php artisan queue:restart
 ```
 
 The script runs from `CPANEL_TARGET_DIR`.
-
-## Optional `DOT_ENV` Keys
-
-```env
-CPANEL_PORT=22
-CPANEL_PHP_BIN=php
-PHP_VERSION=8.2
-NODE_VERSION=22
-DEPLOY_BRANCH=main
-RSYNC_DELETE=true
-RUN_LARAVEL_MIGRATIONS=true
-RUN_LARAVEL_OPTIMIZE=true
-RUN_LARAVEL_STORAGE_LINK=true
-```
 
 Command overrides, if auto-detection is not enough:
 
