@@ -1,6 +1,6 @@
 # Push to cPanel
 
-Deploy a repo to cPanel/shared hosting over SSH with `rsync`.
+Deploy a repo to cPanel/shared hosting over SSH.
 
 The workflow builds on GitHub Actions, then uploads the completed app to cPanel. The shared server does not run `git pull`, `ssh-agent`, Composer installs, Node installs, or frontend builds.
 
@@ -29,6 +29,7 @@ CPANEL_TARGET_DIR=/home/cpanel_user/public_html
 # Defaults
 CPANEL_PORT=22
 CPANEL_PHP_BIN=php
+CPANEL_DEPLOY_METHOD=auto
 PHP_VERSION=8.2
 NODE_VERSION=22
 RSYNC_DELETE=true
@@ -62,7 +63,7 @@ Keep this separate from `DOT_ENV` because it is multiline.
 
 ### `CPANEL_EXCLUDES`
 
-Extra newline-separated `rsync` exclude patterns:
+Extra newline-separated upload exclude patterns:
 
 ```txt
 public/uploads/
@@ -97,7 +98,7 @@ Keep command overrides single-line. Put multiline remote commands in `CPANEL_REM
 - Checks out the repo on GitHub Actions.
 - Runs Composer when `composer.json` exists.
 - Runs Node install/build when `package.json` exists.
-- Uploads files with `rsync`.
+- Uploads files with `rsync` when available, or with an archive upload fallback when remote `rsync` is unavailable.
 - Runs Laravel post-deploy commands when `artisan` exists on the server.
 - Serializes deploys with GitHub Actions `concurrency` and a remote lock.
 
@@ -131,6 +132,8 @@ Important notes:
 
 Remote files that are not present locally can be deleted unless they are excluded. Add any persistent server-only paths to `CPANEL_EXCLUDES`.
 
+This only applies when the deploy uses `rsync`. If the cPanel server does not have `rsync`, the workflow falls back to an archive upload and extract. That fallback overwrites uploaded files but does not delete remote files that are no longer present locally.
+
 For existing sites, start with:
 
 ```env
@@ -143,10 +146,70 @@ After verifying the exclude list, switch back to:
 RSYNC_DELETE=true
 ```
 
+## Troubleshooting
+
+### `jailshell: line 1: rsync: command not found`
+
+The cPanel server does not have `rsync` installed. By default, the workflow uses:
+
+```env
+CPANEL_DEPLOY_METHOD=auto
+```
+
+With `auto`, it falls back to archive upload when remote `rsync` is missing. The fallback requires `tar` on the cPanel server.
+
+If you need exact delete behavior for files removed from the repo, ask the host to enable `rsync` and keep:
+
+```env
+RSYNC_DELETE=true
+CPANEL_DEPLOY_METHOD=rsync
+```
+
+### `protocol version mismatch -- is your shell clean?`
+
+`rsync` requires the remote SSH command to start without extra stdout. If the cPanel account prints anything before the command runs, rsync sees that text instead of the rsync protocol and fails. With `CPANEL_DEPLOY_METHOD=auto`, the workflow falls back to archive upload when it detects this.
+
+Common unwanted output looks like this:
+
+```txt
+Agent pid 847221
+Identity added: /home/user/.ssh/id_ed25519 (server)
+```
+
+That output usually comes from `ssh-agent`, `ssh-add`, `echo`, `printf`, banners, or similar commands in the cPanel user's startup files:
+
+```txt
+~/.bashrc
+~/.bash_profile
+~/.profile
+~/.ssh/rc
+```
+
+Remove those commands, or guard them so they only run for an interactive shell. For Bash startup files, put this before any command that prints output:
+
+```sh
+case $- in
+  *i*) ;;
+  *) return ;;
+esac
+```
+
+You can test the server from your machine:
+
+```sh
+ssh -T cpanel_user@example.com 'printf "__clean__\n"'
+```
+
+The output must be exactly:
+
+```txt
+__clean__
+```
+
 ## Server Requirements
 
 - SSH access.
-- `rsync` on the cPanel server.
+- `rsync` or `tar` on the cPanel server.
 - Writable `CPANEL_TARGET_DIR`.
 - PHP on the server if Laravel post-deploy commands are enabled.
 
@@ -157,7 +220,7 @@ The server does not need GitHub access, Git, Composer, Node, npm, pnpm, or yarn 
 - Add `DOT_ENV` and `CPANEL_SSH_KEY`.
 - Put the production `.env` file on cPanel.
 - Confirm the SSH key works for the cPanel user.
-- Confirm `rsync` exists on the cPanel server.
+- Confirm `rsync` or `tar` exists on the cPanel server.
 - Add persistent upload directories to `CPANEL_EXCLUDES`.
 - Use `RSYNC_DELETE=false` for the first run if the target directory already has important files.
 

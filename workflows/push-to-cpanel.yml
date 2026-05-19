@@ -108,6 +108,7 @@ jobs:
           defaults=(
             CPANEL_PORT=22
             CPANEL_PHP_BIN=php
+            CPANEL_DEPLOY_METHOD=auto
             PHP_VERSION=8.2
             NODE_VERSION=22
             RSYNC_DELETE=true
@@ -237,15 +238,145 @@ jobs:
               -e '/^[[:space:]]*$/d' \
               -e '/^#/d' \
               > "$EXCLUDES_FILE"
+
+            TAR_EXCLUDES_FILE="$RUNNER_TEMP/tar-excludes.txt"
+            awk '
+              {
+                pattern = $0
+                sub(/\/+$/, "", pattern)
+                print pattern
+                print "./" pattern
+              }
+            ' "$EXCLUDES_FILE" > "$TAR_EXCLUDES_FILE"
           }
 
           build_ssh_args() {
             SSH_ARGS=(
               -p "$CPANEL_PORT"
               -i "$SSH_KEY"
+              -T
               -o IdentitiesOnly=yes
               -o StrictHostKeyChecking=accept-new
             )
+          }
+
+          build_scp_args() {
+            SCP_ARGS=(
+              -P "$CPANEL_PORT"
+              -i "$SSH_KEY"
+              -o IdentitiesOnly=yes
+              -o StrictHostKeyChecking=accept-new
+            )
+          }
+
+          is_clean_ssh_shell() {
+            local marker="__github_cpanel_clean_shell__"
+            local output
+
+            output="$(ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "printf '%s\n' '$marker'")"
+
+            if [ "$output" != "$marker" ]; then
+              CLEAN_SHELL_OUTPUT="$output"
+              return 1
+            fi
+
+            CLEAN_SHELL_OUTPUT=
+            return 0
+          }
+
+          ensure_remote_target() {
+            printf -v REMOTE_TARGET '%q' "$CPANEL_TARGET_DIR"
+            ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "mkdir -p $REMOTE_TARGET"
+          }
+
+          remote_has_command() {
+            ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "command -v $1 >/dev/null 2>&1"
+          }
+
+          select_deploy_method() {
+            case "$CPANEL_DEPLOY_METHOD" in
+              auto)
+                if remote_has_command rsync && is_clean_ssh_shell; then
+                  SELECTED_DEPLOY_METHOD=rsync
+                elif remote_has_command rsync; then
+                  SELECTED_DEPLOY_METHOD=archive
+                  echo "::warning::Remote rsync exists, but the SSH shell prints startup output. Falling back to archive upload."
+                  echo "Remote stdout was:"
+                  printf '%s\n' "$CLEAN_SHELL_OUTPUT"
+                else
+                  SELECTED_DEPLOY_METHOD=archive
+                  echo "::warning::Remote rsync was not found. Falling back to archive upload."
+                fi
+                ;;
+              rsync)
+                if ! remote_has_command rsync; then
+                  echo "::error::CPANEL_DEPLOY_METHOD=rsync requires rsync on the cPanel server."
+                  exit 1
+                fi
+                if ! is_clean_ssh_shell; then
+                  echo "::error::CPANEL_DEPLOY_METHOD=rsync requires a clean non-interactive SSH shell."
+                  echo "::error::Remove or guard startup output from files such as ~/.bashrc, ~/.bash_profile, ~/.profile, and ~/.ssh/rc."
+                  echo "Remote stdout was:"
+                  printf '%s\n' "$CLEAN_SHELL_OUTPUT"
+                  exit 1
+                fi
+                SELECTED_DEPLOY_METHOD=rsync
+                ;;
+              archive)
+                SELECTED_DEPLOY_METHOD=archive
+                ;;
+              *)
+                echo "::error::Invalid CPANEL_DEPLOY_METHOD: $CPANEL_DEPLOY_METHOD. Use auto, rsync, or archive."
+                exit 1
+                ;;
+            esac
+
+            if [ "$SELECTED_DEPLOY_METHOD" = "archive" ]; then
+              if ! remote_has_command tar; then
+                echo "::error::Archive deploy fallback requires tar on the cPanel server."
+                exit 1
+              fi
+
+              if [ "$RSYNC_DELETE" = "true" ]; then
+                echo "::warning::RSYNC_DELETE=true is ignored because archive deploy does not support remote delete."
+              fi
+            fi
+
+            echo "Using $SELECTED_DEPLOY_METHOD deploy method."
+          }
+
+          deploy_with_rsync() {
+            DELETE_ARGS=()
+            if [ "$RSYNC_DELETE" = "true" ]; then
+              DELETE_ARGS=(--delete --delete-delay)
+            fi
+
+            rsync -az --delay-updates "${DELETE_ARGS[@]}" \
+              --exclude-from="$EXCLUDES_FILE" \
+              -e "ssh -p $CPANEL_PORT -i $SSH_KEY -T -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+              ./ "$CPANEL_USERNAME@$CPANEL_HOST:${CPANEL_TARGET_DIR%/}/"
+          }
+
+          deploy_with_archive() {
+            local archive_file="$RUNNER_TEMP/cpanel-deploy.tar.gz"
+            local remote_archive=".github-cpanel-deploy-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}.tar.gz"
+
+            tar -czf "$archive_file" --exclude-from="$TAR_EXCLUDES_FILE" -C . .
+            scp "${SCP_ARGS[@]}" "$archive_file" "$CPANEL_USERNAME@$CPANEL_HOST:$remote_archive"
+
+            printf -v REMOTE_ENV 'CPANEL_TARGET_DIR=%q REMOTE_ARCHIVE=%q' \
+              "$CPANEL_TARGET_DIR" \
+              "$remote_archive"
+
+            {
+              cat <<'REMOTE_SCRIPT'
+          set -Eeuo pipefail
+          trap 'rm -f "$REMOTE_ARCHIVE"' EXIT
+
+          mkdir -p "$CPANEL_TARGET_DIR"
+          tar -xzf "$REMOTE_ARCHIVE" -C "$CPANEL_TARGET_DIR"
+          REMOTE_SCRIPT
+            } | ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "$REMOTE_ENV bash -se"
           }
 
           run_remote() {
@@ -313,18 +444,14 @@ jobs:
           write_ssh_key
           write_excludes
           build_ssh_args
+          build_scp_args
+          select_deploy_method
+          ensure_remote_target
 
-          printf -v REMOTE_TARGET '%q' "$CPANEL_TARGET_DIR"
-          ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "mkdir -p $REMOTE_TARGET"
-
-          DELETE_ARGS=()
-          if [ "$RSYNC_DELETE" = "true" ]; then
-            DELETE_ARGS=(--delete --delete-delay)
+          if [ "$SELECTED_DEPLOY_METHOD" = "rsync" ]; then
+            deploy_with_rsync
+          else
+            deploy_with_archive
           fi
-
-          rsync -az --delay-updates "${DELETE_ARGS[@]}" \
-            --exclude-from="$EXCLUDES_FILE" \
-            -e "ssh -p $CPANEL_PORT -i $SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-            ./ "$CPANEL_USERNAME@$CPANEL_HOST:${CPANEL_TARGET_DIR%/}/"
 
           run_remote
