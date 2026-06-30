@@ -302,6 +302,9 @@ jobs:
               -p "$CPANEL_PORT"
               -T
               -o StrictHostKeyChecking=accept-new
+              -o ConnectTimeout=15
+              -o ServerAliveInterval=30
+              -o ServerAliveCountMax=4
             )
 
             if [ "$AUTH_METHOD" = "key" ]; then
@@ -315,6 +318,9 @@ jobs:
             SCP_ARGS=(
               -P "$CPANEL_PORT"
               -o StrictHostKeyChecking=accept-new
+              -o ConnectTimeout=15
+              -o ServerAliveInterval=30
+              -o ServerAliveCountMax=4
             )
 
             if [ "$AUTH_METHOD" = "key" ]; then
@@ -322,6 +328,15 @@ jobs:
             else
               SCP_ARGS+=(-o PubkeyAuthentication=no -o PreferredAuthentications=password)
             fi
+          }
+
+          check_connection() {
+            echo "Connecting to $CPANEL_USERNAME@$CPANEL_HOST on port $CPANEL_PORT (auth: $AUTH_METHOD)..."
+            if ! "${SSHPASS_PREFIX[@]}" ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "true"; then
+              echo "::error::Could not reach $CPANEL_HOST on port $CPANEL_PORT. Verify CPANEL_HOST/CPANEL_PORT, that the server is up, and that the GitHub runner IP is allowed through any firewall or cPanel IP allowlist."
+              exit 1
+            fi
+            echo "SSH connection established."
           }
 
           is_clean_ssh_shell() {
@@ -351,16 +366,16 @@ jobs:
           select_deploy_method() {
             case "$CPANEL_DEPLOY_METHOD" in
               auto)
-                if remote_has_command rsync && is_clean_ssh_shell; then
+                if ! remote_has_command rsync; then
+                  SELECTED_DEPLOY_METHOD=archive
+                  echo "::warning::Remote rsync was not found. Falling back to archive upload."
+                elif is_clean_ssh_shell; then
                   SELECTED_DEPLOY_METHOD=rsync
-                elif remote_has_command rsync; then
+                else
                   SELECTED_DEPLOY_METHOD=archive
                   echo "::warning::Remote rsync exists, but the SSH shell prints startup output. Falling back to archive upload."
                   echo "Remote stdout was:"
                   printf '%s\n' "$CLEAN_SHELL_OUTPUT"
-                else
-                  SELECTED_DEPLOY_METHOD=archive
-                  echo "::warning::Remote rsync was not found. Falling back to archive upload."
                 fi
                 ;;
               rsync)
@@ -406,7 +421,7 @@ jobs:
               DELETE_ARGS=(--delete --delete-delay)
             fi
 
-            local rsh="ssh -p $CPANEL_PORT -T -o StrictHostKeyChecking=accept-new"
+            local rsh="ssh -p $CPANEL_PORT -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=4"
             if [ "$AUTH_METHOD" = "key" ]; then
               rsh="$rsh -i $SSH_KEY -o IdentitiesOnly=yes"
             else
@@ -507,13 +522,18 @@ jobs:
           write_excludes
           build_ssh_args
           build_scp_args
+          check_connection
           select_deploy_method
           ensure_remote_target
 
+          echo "Uploading files to $CPANEL_TARGET_DIR via $SELECTED_DEPLOY_METHOD..."
           if [ "$SELECTED_DEPLOY_METHOD" = "rsync" ]; then
             deploy_with_rsync
           else
             deploy_with_archive
           fi
+          echo "Upload complete."
 
+          echo "Running remote post-deploy commands..."
           run_remote
+          echo "Deploy finished successfully."
