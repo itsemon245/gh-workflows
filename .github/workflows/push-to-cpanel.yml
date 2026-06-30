@@ -1,28 +1,43 @@
-name: production
+name: Push to cPanel
 
 on:
-  push:
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub Environment to deploy in. Defaults to the caller's branch name."
+        type: string
+        required: false
+        default: ""
+      runs-on:
+        description: "Runner label for the deploy job."
+        type: string
+        required: false
+        default: ubuntu-latest
+      timeout-minutes:
+        description: "Job timeout in minutes."
+        type: number
+        required: false
+        default: 30
 
 permissions:
   contents: read
 
 concurrency:
-  group: cpanel-deploy-${{ github.repository }}
+  group: cpanel-deploy-${{ github.repository }}-${{ inputs.environment || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    environment: ${{ github.ref_name }}
-    timeout-minutes: 30
+    runs-on: ${{ inputs.runs-on }}
+    environment: ${{ inputs.environment || github.ref_name }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
 
     steps:
       - name: Load deploy config
         id: config
         shell: bash
         env:
-          DOT_ENV_SECRET: ${{ secrets.DOT_ENV }}
+          DOT_ENV_CONFIG: ${{ vars.DOT_ENV || secrets.DOT_ENV }}
           CURRENT_BRANCH: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -37,9 +52,9 @@ jobs:
             printf '%s=%s\n' "$key" "$value" >> "$GITHUB_ENV"
           }
 
-          if [ -z "${DOT_ENV_SECRET:-}" ]; then
+          if [ -z "${DOT_ENV_CONFIG:-}" ]; then
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping deploy for $CURRENT_BRANCH. No DOT_ENV secret is configured for the '$CURRENT_BRANCH' environment."
+            echo "Skipping deploy for $CURRENT_BRANCH. No DOT_ENV variable is configured for the '$CURRENT_BRANCH' environment."
             exit 0
           fi
 
@@ -78,7 +93,7 @@ jobs:
             fi
 
             set_config "$key" "$value"
-          done <<< "$DOT_ENV_SECRET"
+          done <<< "$DOT_ENV_CONFIG"
 
           DEPLOY_BRANCH="${DEPLOY_BRANCH:-$DEFAULT_BRANCH}"
           set_config DEPLOY_BRANCH "$DEPLOY_BRANCH"
@@ -195,8 +210,8 @@ jobs:
         env:
           CPANEL_SSH_KEY_SECRET: ${{ secrets.CPANEL_SSH_KEY }}
           CPANEL_PASSWORD_SECRET: ${{ secrets.CPANEL_PASSWORD }}
-          CPANEL_EXCLUDES_SECRET: ${{ secrets.CPANEL_EXCLUDES }}
-          CPANEL_REMOTE_POST_DEPLOY_SECRET: ${{ secrets.CPANEL_REMOTE_POST_DEPLOY }}
+          CPANEL_EXCLUDES_CONFIG: ${{ vars.CPANEL_EXCLUDES || secrets.CPANEL_EXCLUDES }}
+          CPANEL_REMOTE_POST_DEPLOY_CONFIG: ${{ vars.CPANEL_REMOTE_POST_DEPLOY || secrets.CPANEL_REMOTE_POST_DEPLOY }}
         run: |
           set -Eeuo pipefail
 
@@ -240,8 +255,8 @@ jobs:
           bootstrap/cache/
           EOF
 
-              if [ -n "${CPANEL_EXCLUDES_SECRET:-}" ]; then
-                printf '%s\n' "$CPANEL_EXCLUDES_SECRET"
+              if [ -n "${CPANEL_EXCLUDES_CONFIG:-}" ]; then
+                printf '%s\n' "$CPANEL_EXCLUDES_CONFIG"
               fi
             } | sed \
               -e 's/^[[:space:]]*//' \
@@ -459,9 +474,9 @@ jobs:
           fi
           REMOTE_SCRIPT
 
-              if [ -n "${CPANEL_REMOTE_POST_DEPLOY_SECRET:-}" ]; then
+              if [ -n "${CPANEL_REMOTE_POST_DEPLOY_CONFIG:-}" ]; then
                 printf '\n# Custom remote post-deploy\n'
-                printf '%s\n' "$CPANEL_REMOTE_POST_DEPLOY_SECRET"
+                printf '%s\n' "$CPANEL_REMOTE_POST_DEPLOY_CONFIG"
               fi
             } | "${SSHPASS_PREFIX[@]}" ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "$REMOTE_ENV bash -se"
           }
