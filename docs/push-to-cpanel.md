@@ -51,13 +51,27 @@ CPANEL_TARGET_DIR=/home/cpanel_user/public_html
 
 `DOT_ENV` supports blank lines, comments, `export KEY=value`, and simple quoted values. Keep every value on one line.
 
-### `CPANEL_SSH_KEY`
+### Authentication (choose one)
+
+Provide exactly one of the following. If both are set, `CPANEL_PASSWORD` takes precedence.
+
+#### `CPANEL_SSH_KEY`
 
 Private SSH key used by GitHub Actions to connect to cPanel.
 
 The matching public key must be authorized for the cPanel SSH user.
 
 Keep this separate from `DOT_ENV` because it is multiline.
+
+#### `CPANEL_PASSWORD`
+
+Password for the cPanel SSH user. With this set, the workflow authenticates using the username, host, and password (no private key).
+
+Notes:
+
+- Password auth is less secure than a key. The password is exposed to `sshpass` and the environment on the runner. Prefer `CPANEL_SSH_KEY` when possible.
+- Many cPanel hosts disable password SSH. Confirm `PasswordAuthentication yes` is allowed for your account.
+- `sshpass` is installed on the runner at deploy time, so password auth requires an Ubuntu runner.
 
 ## Optional Secrets
 
@@ -217,9 +231,9 @@ The server does not need GitHub access, Git, Composer, Node, npm, pnpm, or yarn 
 
 ## First Deploy Checklist
 
-- Add `DOT_ENV` and `CPANEL_SSH_KEY`.
+- Add `DOT_ENV` and one of `CPANEL_SSH_KEY` or `CPANEL_PASSWORD`.
 - Put the production `.env` file on cPanel.
-- Confirm the SSH key works for the cPanel user.
+- Confirm the SSH key or password works for the cPanel user.
 - Confirm `rsync` or `tar` exists on the cPanel server.
 - Add persistent upload directories to `CPANEL_EXCLUDES`.
 - Use `RSYNC_DELETE=false` for the first run if the target directory already has important files.
