@@ -123,7 +123,7 @@ php artisan queue:restart
 
 - Checks out the repo, runs Composer if `composer.json` exists, runs Node install + build if `package.json` exists.
 - Uploads via `rsync`, or an archive (`tar`) fallback when remote `rsync` is missing.
-- Runs Laravel post-deploy commands when `artisan` exists on the server.
+- Runs Laravel post-deploy commands when `artisan` exists on the server: create writable directories, run migrations, clear optimized caches, refresh the storage link, then warm optimized caches.
 - Serializes deploys per environment via `concurrency` plus a remote lock.
 
 The full built tree is uploaded each deploy, so the artifact is always complete and never trusts server state.

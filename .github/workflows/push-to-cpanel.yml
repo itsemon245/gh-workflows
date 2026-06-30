@@ -495,11 +495,11 @@ jobs:
               storage/logs \
               bootstrap/cache
 
-            "$CPANEL_PHP_BIN" artisan optimize:clear
-
             if [ "$RUN_LARAVEL_MIGRATIONS" = "true" ]; then
               "$CPANEL_PHP_BIN" artisan migrate --force
             fi
+
+            "$CPANEL_PHP_BIN" artisan optimize:clear
 
             if [ "$RUN_LARAVEL_STORAGE_LINK" = "true" ]; then
               "$CPANEL_PHP_BIN" artisan storage:link || true
