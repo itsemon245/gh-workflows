@@ -1,8 +1,8 @@
 # Example caller for the reusable "Push to cPanel" workflow.
 #
 # Copy this file into your application repository as
-# .github/workflows/deploy.yml. Pin @main to a tag or SHA if you want to lock
-# the workflow version.
+# .github/workflows/deploy.yml. The project is pre-1.0, so pin an exact tag
+# (@v0.1.0) — minor versions may include breaking changes.
 #
 # All deploy configuration lives in GitHub Variables/Secrets (see the docs),
 # so this caller stays a thin wrapper. `secrets: inherit` forwards the
@@ -19,7 +19,7 @@ on:
 
 jobs:
   deploy:
-    uses: itsemon245/gh-workflows/.github/workflows/push-to-cpanel.yml@main
+    uses: itsemon245/gh-workflows/.github/workflows/push-to-cpanel.yml@v0.1.0
     secrets: inherit
     # Optional inputs (defaults shown):
     # with:

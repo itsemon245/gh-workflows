@@ -152,8 +152,16 @@ jobs:
           tools: composer:v2
           coverage: none
 
-      - name: Install PHP dependencies
+      - name: Cache Composer vendor
+        id: composer_cache
         if: steps.config.outputs.should_deploy == 'true' && hashFiles('composer.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ runner.os }}-php${{ steps.config.outputs.php_version }}-${{ hashFiles('composer.lock') }}
+
+      - name: Install PHP dependencies
+        if: steps.config.outputs.should_deploy == 'true' && hashFiles('composer.json') != '' && steps.composer_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -170,19 +178,33 @@ jobs:
         with:
           node-version: ${{ steps.config.outputs.node_version }}
 
+      - name: Cache Node modules
+        id: node_cache
+        if: steps.config.outputs.should_deploy == 'true' && hashFiles('package.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-${{ runner.os }}-node${{ steps.config.outputs.node_version }}-${{ hashFiles('pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'npm-shrinkwrap.json') }}
+
       - name: Install and build frontend assets
         if: steps.config.outputs.should_deploy == 'true' && hashFiles('package.json') != ''
         shell: bash
+        env:
+          NODE_CACHE_HIT: ${{ steps.node_cache.outputs.cache-hit }}
         run: |
           set -Eeuo pipefail
 
-          if [ -n "${NODE_INSTALL_COMMAND:-}" ]; then
+          if [ -f pnpm-lock.yaml ] || [ -f yarn.lock ]; then
+            corepack enable
+          fi
+
+          if [ "${NODE_CACHE_HIT:-}" = "true" ]; then
+            echo "Restored node_modules from cache. Skipping install."
+          elif [ -n "${NODE_INSTALL_COMMAND:-}" ]; then
             bash -lc "$NODE_INSTALL_COMMAND"
           elif [ -f pnpm-lock.yaml ]; then
-            corepack enable
             pnpm install --frozen-lockfile
           elif [ -f yarn.lock ]; then
-            corepack enable
             yarn install --immutable || yarn install --frozen-lockfile
           elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci

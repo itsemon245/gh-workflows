@@ -18,13 +18,13 @@ on:
 
 jobs:
   deploy:
-    uses: itsemon245/gh-workflows/.github/workflows/push-to-cpanel.yml@main
+    uses: itsemon245/gh-workflows/.github/workflows/push-to-cpanel.yml@v0.1.0
     secrets: inherit
 ```
 
 - The caller owns the triggers. List the branches you deploy under `on.push.branches`.
 - `secrets: inherit` is required — it forwards your secrets to the reusable workflow.
-- Pin `@main` to a tag or SHA to lock the version.
+- The project is pre-1.0: pin an exact tag (`@v0.1.0`). Minor `0.x` bumps may include breaking changes, so review before upgrading. Avoid `@main` in production — it changes on every push. See [Versioning](#versioning).
 
 ### Inputs (optional, via `with:`)
 
@@ -121,12 +121,16 @@ php artisan queue:restart
 
 ## What it does
 
-- Checks out the repo, runs Composer if `composer.json` exists, runs Node install/build if `package.json` exists.
+- Checks out the repo, runs Composer if `composer.json` exists, runs Node install + build if `package.json` exists.
 - Uploads via `rsync`, or an archive (`tar`) fallback when remote `rsync` is missing.
 - Runs Laravel post-deploy commands when `artisan` exists on the server.
 - Serializes deploys per environment via `concurrency` plus a remote lock.
 
-Composer/Node installs run every deploy so the artifact is always complete, never trusting server state.
+The full built tree is uploaded each deploy, so the artifact is always complete and never trusts server state.
+
+**Caching:** `vendor/` is cached by `composer.lock` (+ PHP version) and `node_modules/` by the lockfile (+ Node version). When the lockfile is unchanged the install is skipped and the cached deps are reused; the frontend build still runs every time. Change the lockfile to force a fresh install.
+
+**Package manager:** the Node step auto-detects `pnpm-lock.yaml`, `yarn.lock`, or `package-lock.json`. To use pnpm (fastest with caching), commit a `pnpm-lock.yaml` — it's picked up automatically.
 
 Always excluded from upload: `.git/`, `.github/`, `.env`, `.env.*`, `node_modules/`, `storage/`, `public/storage`, `bootstrap/cache/`.
 
@@ -161,3 +165,20 @@ SSH access, `rsync` or `tar`, a writable `CPANEL_TARGET_DIR`, and PHP if Laravel
 - Set `DEPLOY_BRANCH` in `DOT_ENV` to the branch name.
 - Put the production `.env` on cPanel; confirm SSH auth and `rsync`/`tar` work.
 - Add persistent upload dirs to `CPANEL_EXCLUDES`; use `RSYNC_DELETE=false` for the first run if the target already has files.
+
+## Versioning
+
+Released with SemVer tags. The project is **pre-1.0** (`0.x`), so:
+
+- Every release is an immutable, exact tag — e.g. `v0.1.0`.
+- Pin an exact tag (`@v0.1.0`). There is **no sliding tag** yet, because in `0.x` a minor bump (`0.1.0` → `0.2.0`) may include breaking changes.
+- A change is **breaking** if it: renames/removes an input, requires a new secret or `DOT_ENV` key, changes a default that alters deploy behavior, or moves/renames the workflow file. In `0.x` these go in a **minor** bump; backward-compatible fixes go in a **patch**.
+
+Cut a release by tagging the commit:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Once the API stabilizes at `v1.0.0`, this switches to the usual SemVer + sliding major tag (pin `@v1` for automatic backward-compatible updates), and breaking changes move to a new major (`v2`).
