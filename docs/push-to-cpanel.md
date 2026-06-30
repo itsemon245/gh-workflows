@@ -12,9 +12,39 @@ Copy the workflow into the target repo:
 .github/workflows/push-to-cpanel.yml
 ```
 
-Then add the secrets below in GitHub: `Settings -> Secrets and variables -> Actions`.
+The workflow is environment-aware: the job runs in the GitHub Environment named after the branch that was pushed (`environment: ${{ github.ref_name }}`). Store the secrets below as **Environment secrets**, not repository secrets, so the same workflow can deploy staging and production from their own branches with their own credentials.
+
+## Environments (staging and production)
+
+The recommended setup is one branch per stage, each matched by an Environment of the same name:
+
+| Branch       | Environment  | Deploys to            |
+| ------------ | ------------ | --------------------- |
+| `staging`    | `staging`    | the staging cPanel    |
+| `production` | `production` | the production cPanel |
+
+For each stage:
+
+1. Create the Environment in GitHub: `Settings -> Environments -> New environment`. Name it exactly like the branch (e.g. `staging`, `production`).
+2. Add the secrets below to that Environment (`Settings -> Environments -> <name> -> Environment secrets`). Each environment gets its own `DOT_ENV`, auth secret, etc.
+3. In that Environment's `DOT_ENV`, set `DEPLOY_BRANCH` to the same branch name (see below). This is required for any branch other than the repository default branch.
+
+Pushing to `staging` then resolves the `staging` Environment's secrets; pushing to `production` resolves the `production` Environment's secrets. The workflow file is identical for both.
+
+### How environment resolution works
+
+- `environment: ${{ github.ref_name }}` selects the Environment dynamically from the pushed branch name. No per-stage workflow copies are needed.
+- `secrets.*` then resolves against that Environment first, then falls back to repository and organization secrets for any name the Environment does not define. So an Environment secret overrides a repository secret of the same name.
+- A push to a branch with no configured Environment (no `DOT_ENV`) is skipped, not failed.
+- Add **deployment branch policies** on each Environment (`Settings -> Environments -> <name> -> Deployment branches`) so, for example, only the `production` branch can use the `production` Environment. Required reviewers and wait timers also apply once set.
+
+### Repository secrets (optional)
+
+You can keep shared, non-stage-specific values as repository secrets. They act as a fallback for any name an Environment does not define. Prefer Environment secrets for anything that differs between staging and production (host, credentials, target dir).
 
 ## Required Secrets
+
+Add each of these to the relevant Environment (`Settings -> Environments -> <name> -> Environment secrets`), or as repository secrets for a single shared stage.
 
 ### `DOT_ENV`
 
@@ -37,9 +67,13 @@ RUN_LARAVEL_MIGRATIONS=true
 RUN_LARAVEL_OPTIMIZE=true
 RUN_LARAVEL_STORAGE_LINK=true
 
-# Optional. If omitted, the repository default branch is used.
-# DEPLOY_BRANCH=main
+# Branch this environment deploys. Must match the pushed branch.
+# Required for any branch other than the repository default branch.
+# Example: set DEPLOY_BRANCH=staging in the staging environment.
+DEPLOY_BRANCH=production
 ```
+
+`DEPLOY_BRANCH` is the safety gate that ties an environment to a branch: if the pushed branch does not match `DEPLOY_BRANCH`, the deploy is skipped. In the per-environment setup, set it to the same name as the branch and environment. It defaults to the repository default branch when omitted.
 
 Required keys:
 
@@ -231,7 +265,10 @@ The server does not need GitHub access, Git, Composer, Node, npm, pnpm, or yarn 
 
 ## First Deploy Checklist
 
-- Add `DOT_ENV` and one of `CPANEL_SSH_KEY` or `CPANEL_PASSWORD`.
+- Create an Environment named after the deploy branch (e.g. `production`, `staging`).
+- Add `DOT_ENV` and one of `CPANEL_SSH_KEY` or `CPANEL_PASSWORD` to that Environment.
+- Set `DEPLOY_BRANCH` in that Environment's `DOT_ENV` to the same branch name (unless it is the repository default branch).
+- Optionally add a deployment branch policy so only that branch can use the Environment.
 - Put the production `.env` file on cPanel.
 - Confirm the SSH key or password works for the cPanel user.
 - Confirm `rsync` or `tar` exists on the cPanel server.
