@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: ./release [--major|--minor|--patch] [--dry-run] [--yes] [vX.Y.Z]
+
+Prepares a release locally:
+  1. Infers or prompts for the release tag.
+  2. Updates CHANGELOG.md from commits since the previous tag.
+  3. Commits the changelog.
+  4. Creates an annotated tag on the release commit.
+  5. Pushes the current branch and the tag.
+
+If no bump flag is provided, --patch is used.
+Use --dry-run to preview the inferred tag and changelog without changing files.
+USAGE
+}
+
+bump="patch"
+assume_yes="false"
+dry_run="false"
+tag=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --major) bump="major" ;;
+    --minor) bump="minor" ;;
+    --patch) bump="patch" ;;
+    -y|--yes) assume_yes="true" ;;
+    --dry-run) dry_run="true" ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*) tag="$1" ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+git_status="$(git status --porcelain)"
+if [ -n "$git_status" ] && [ "$dry_run" != "true" ]; then
+  echo "Working tree must be clean before creating a release." >&2
+  echo "$git_status" >&2
+  exit 1
+fi
+
+latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+
+infer_tag() {
+  local latest="$1"
+  local mode="$2"
+  local major minor patch
+
+  if [ -z "$latest" ]; then
+    case "$mode" in
+      major) echo "v1.0.0" ;;
+      minor) echo "v0.1.0" ;;
+      patch) echo "v0.0.1" ;;
+    esac
+    return
+  fi
+
+  latest="${latest#v}"
+  IFS=. read -r major minor patch <<EOF
+$latest
+EOF
+
+  case "$mode" in
+    major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
+    minor)
+      minor=$((minor + 1))
+      patch=0
+      ;;
+    patch) patch=$((patch + 1)) ;;
+  esac
+
+  echo "v$major.$minor.$patch"
+}
+
+default_tag="$(infer_tag "$latest_tag" "$bump")"
+
+if [ -z "$tag" ]; then
+  if [ "$assume_yes" = "true" ]; then
+    tag="$default_tag"
+  else
+    printf "Release tag [%s]: " "$default_tag"
+    read -r entered_tag
+    tag="${entered_tag:-$default_tag}"
+  fi
+fi
+
+case "$tag" in
+  v*) ;;
+  *) tag="v$tag" ;;
+esac
+
+if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+  echo "Tag already exists: $tag" >&2
+  exit 1
+fi
+
+echo "Preparing $tag"
+branch="$(git branch --show-current)"
+if [ -z "$branch" ]; then
+  echo "Cannot release from a detached HEAD." >&2
+  exit 1
+fi
+
+if [ "$dry_run" = "true" ]; then
+  notes_file="$(mktemp)"
+  changelog_file="$(mktemp)"
+  if [ -f CHANGELOG.md ]; then
+    cp CHANGELOG.md "$changelog_file"
+  fi
+
+  python3 scripts/update-changelog.py "$tag" --ref HEAD --notes "$notes_file" --changelog "$changelog_file"
+
+  echo "Dry run: CHANGELOG.md would be updated."
+  echo
+  echo "Dry run: no files were changed, no commit was created, and no tag was pushed."
+  echo
+  echo "Release notes preview:"
+  cat "$notes_file"
+  rm -f "$notes_file" "$changelog_file"
+  exit 0
+fi
+
+python3 scripts/update-changelog.py "$tag" --ref HEAD --notes /tmp/gh-workflows-release-notes.md --changelog CHANGELOG.md
+
+if [ -z "$(git status --porcelain -- CHANGELOG.md)" ]; then
+  echo "Changelog did not change; refusing to create an empty release commit." >&2
+  exit 1
+fi
+
+git add CHANGELOG.md
+git commit -m "Prepare release $tag"
+git tag -a "$tag" -m "$tag"
+git push origin "$branch" "$tag"
+
+echo "Released $tag"

@@ -176,11 +176,12 @@ Released with SemVer tags. The project is **pre-1.0** (`0.x`), so:
 - Pin an exact tag (`@v0.1.0`). There is **no sliding tag** yet, because in `0.x` a minor bump (`0.1.0` → `0.2.0`) may include breaking changes.
 - A change is **breaking** if it: renames/removes an input, requires a new secret or `DOT_ENV` key, changes a default that alters deploy behavior, or moves/renames the workflow file. In `0.x` these go in a **minor** bump; backward-compatible fixes go in a **patch**.
 
-Cut a release by tagging the commit:
+Cut a release with the helper, which generates `CHANGELOG.md`, commits it, creates an annotated tag, and pushes the current branch plus the tag:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+./release --patch
+# Preview without changing files:
+./release --dry-run --patch
 ```
 
 Once the API stabilizes at `v1.0.0`, this switches to the usual SemVer + sliding major tag (pin `@v1` for automatic backward-compatible updates), and breaking changes move to a new major (`v2`).
