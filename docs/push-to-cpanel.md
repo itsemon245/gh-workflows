@@ -142,6 +142,8 @@ Default `true`: remote files not present locally are deleted unless excluded —
 
 **`rsync: command not found`** — the server lacks `rsync`. With `CPANEL_DEPLOY_METHOD=auto` (default) it falls back to archive upload (`tar` required). For exact delete behavior, ask the host to enable `rsync` and set `CPANEL_DEPLOY_METHOD=rsync`.
 
+**`SSH authentication succeeded, but the server did not execute remote commands`** — the host accepted authentication but shell access is disabled or a forced SSH command blocked execution. This workflow needs a working non-interactive shell to create the target directory, extract archive uploads, and run post-deploy commands. Ask the host to enable shell access for the cPanel account, or use an FTP/cPanel-API deployment method instead.
+
 **`protocol version mismatch -- is your shell clean?`** — `rsync` needs the remote SSH shell to print nothing on connect. Output from `ssh-agent`, banners, etc. in `~/.bashrc`, `~/.bash_profile`, `~/.profile`, or `~/.ssh/rc` breaks it (`auto` falls back to archive). Guard startup files to interactive shells only:
 
 ```sh

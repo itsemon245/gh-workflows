@@ -332,18 +332,37 @@ jobs:
 
           check_connection() {
             echo "Connecting to $CPANEL_USERNAME@$CPANEL_HOST on port $CPANEL_PORT (auth: $AUTH_METHOD)..."
-            if ! "${SSHPASS_PREFIX[@]}" ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "true"; then
-              echo "::error::Could not reach $CPANEL_HOST on port $CPANEL_PORT. Verify CPANEL_HOST/CPANEL_PORT, that the server is up, and that the GitHub runner IP is allowed through any firewall or cPanel IP allowlist."
+            if ! has_usable_ssh_shell; then
+              echo "::error::SSH authentication succeeded, but the server did not execute remote commands."
+              echo "::error::Enable shell access for the cPanel account, or use a deployment method that does not require remote shell commands."
+              echo "Remote stdout was:"
+              printf '%s\n' "$SSH_SHELL_PROBE_OUTPUT"
               exit 1
             fi
-            echo "SSH connection established."
+            echo "SSH shell access verified."
+          }
+
+          has_usable_ssh_shell() {
+            local marker="__github_cpanel_shell_probe__"
+            local output
+
+            if ! output="$("${SSHPASS_PREFIX[@]}" ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "printf '%s\n' '$marker'")"; then
+              SSH_SHELL_PROBE_OUTPUT="$output"
+              return 1
+            fi
+
+            SSH_SHELL_PROBE_OUTPUT="$output"
+            printf '%s\n' "$output" | grep -Fxq "$marker"
           }
 
           is_clean_ssh_shell() {
             local marker="__github_cpanel_clean_shell__"
             local output
 
-            output="$("${SSHPASS_PREFIX[@]}" ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "printf '%s\n' '$marker'")"
+            if ! output="$("${SSHPASS_PREFIX[@]}" ssh "${SSH_ARGS[@]}" "$CPANEL_USERNAME@$CPANEL_HOST" "printf '%s\n' '$marker'")"; then
+              CLEAN_SHELL_OUTPUT="$output"
+              return 1
+            fi
 
             if [ "$output" != "$marker" ]; then
               CLEAN_SHELL_OUTPUT="$output"
